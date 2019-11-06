@@ -15,6 +15,7 @@ import argparse
 import bisect
 import json
 import logging
+import os
 import re
 import socket
 import sys
@@ -113,12 +114,32 @@ version_api.endpoint		= {} # Install all version (1,2,3) API enpoint dicts here
 # Current .version.__version_info__ API:
 # 
 def api_ping_v1( version, path, queries, environ, accept, data=None, framework=web ):
-    return { "pong": data }
+    """Responds to a ping with any body data supplied (to a POST .../ping)"""
+    return dict(
+        pong			= data
+    )
 
 
-version_api.endpoint[__version_info__]	= {
-    "ping": api_ping_v1,
-}
+def api_config_v1( version, path, queries, environ, accept, data=None, framework=web ):
+    """Responds with the current holo-cofig.json (excl. seed, of course).  Assumes that the current
+    holo-config.json is stored (or sym-linked) in the ./data/ directory of the server.
+
+    Presently, *only* the v1.admin element is returned; we avoid returning the seed.
+
+    """
+    with open( "data/holo-config.json" ) as f:
+        config			= json.loads( f.read() )
+    return dict(
+        v1 = dict(
+            admin		= config['v1']['admin']
+        )
+    )
+
+
+version_api.endpoint[__version_info__]	= dict(
+    ping			= api_ping_v1,
+    config			= api_config_v1,
+)
 
 # 
 # Previous supported APIs:
@@ -287,12 +308,15 @@ def main( argv=None ):
         description = "HoloPortOS Admin API Server",
         epilog = "" )
 
+    ap.add_argument( '-C', '--change-directory',
+                     default=None,
+                     help="Change CWD to the target directory" )
     ap.add_argument( '-v', '--verbose',
                      default=0, action="count",
                      help="Display logging information." )
     ap.add_argument( '-d', '--debug',
                      default=False, action="store_true",
-                     help="Enable web server debug mode" )
+                     help="Enable web server debug mode HTML output" )
     ap.add_argument( '-b', '--bind',
                      default=( "%s:%d" % address ),
                      help="HTTP interface[:port] to bind (default: %s:%d)" % (
@@ -307,6 +331,10 @@ def main( argv=None ):
                      help="Log file, if desired" )
     args			= ap.parse_args( argv )
 
+    # If desired, run server relative to the specified directory
+    if args.change_directory:
+        os.chdir( args.change_directory )
+    
     # Deduce interface:port address to bind, and correct types (default is address, above)
     http			= args.bind.split( ':' )
     assert 1 <= len( http ) <= 2, "Invalid --address [<interface>]:[<port>}: %s" % args.bind
