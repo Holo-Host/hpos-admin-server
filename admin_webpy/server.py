@@ -121,18 +121,44 @@ def api_ping_v1( version, path, queries, environ, accept, data=None, framework=w
 
 
 def api_config_v1( version, path, queries, environ, accept, data=None, framework=web ):
-    """Responds with the current holo-cofig.json (excl. seed, of course).  Assumes that the current
-    holo-config.json is stored (or sym-linked) in the ./data/ directory of the server.
+    """Responds with the current HoloPortOS config, if successful.
 
-    Presently, *only* the v1.admin element is returned; we avoid returning the seed.
+    From holo-cofig.json, we return the contents of `v1`, (excluding seed, of course).  Assumes that
+    the current holo-config.json is stored (or sym-linked) in the ./data/ directory of the server.
+    This is presently just the `admin` object, which includes by default, `public_key` and `email`.
+
+    A PUT (replace full contents) or PATCH (change partial contents) can modify this data.  Only the
+    `admin` object in `holo-config.json` may be modified, and only `email`, `public_key` and `name`
+    may be specified.  Attempting to alter any other entries is an error, and attempting to delete
+    `email` or `public_key` is an error.
+
+    The `holo-config.json` is considered mutable configuration data, and the file is altered and
+    re-written in-place, as the last step in PUT/PATCH API call.  We cannot use an atomic move
+    operation (because the file may be supplied via symbolic link), but since the contents of
+    `holo-config.json` is used only on boot-up, we are unlikely to encounter race-conditions.
+
+
+    The `name` field is simply stored, as a string, as a property in the topmost level of the JSON
+    object in `holo-config.json`.
+
+
+    From the HoloPortOS, we produce the `holoportos` object.  This contains `network` ("live",
+    "dev", "test"), and `sshAccess` (true, false).  They may not be deleted, but their values may be
+    changed via PUT or PATCH.
+
+    If a value is changed, a Nix operation is launched to alter this state in the NixOS operating
+    system.
+
+
+    Once successful, the current system `api/v#/config` status is re-harvested and returned; the
+    results of the successful GET, PUT and PATCH are `200 OK`, and a body payload containing the
+    current config of the system.
 
     """
     with open( "data/holo-config.json" ) as f:
         config			= json.loads( f.read() )
     return dict(
-        v1 = dict(
-            admin		= config['v1']['admin']
-        )
+        admin			= config['v1']['admin']
     )
 
 
