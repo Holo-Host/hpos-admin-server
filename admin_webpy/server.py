@@ -12,11 +12,9 @@ __copyright__                   = "Copyright (c) 2019 Holo Ltd."
 __license__                     = "GPLv3 (or later)"
 
 import argparse
-import bisect
 import json
 import logging
 import os
-import re
 import socket
 import sys
 import traceback
@@ -25,6 +23,12 @@ import web
 
 from .version import __version_info__
 from .web_util import *
+from .api_util import register
+from .api import rest
+
+# Register all the available REST APIs; available now in global `apis`
+apis				= register()
+rest( apis )
 
 # The Server provides some known service prefixes.  Here they are; add any more when we know about
 prefixes			= [
@@ -39,152 +43,10 @@ log_cfg				= {
     "format":	'%(asctime)s.%(msecs).03d %(thread)16x %(name)-8.8s %(levelname)-8.8s %(funcName)-10.10s %(message)s',
 }
 
-# 
-# version... -- Enumerate the set of historically supported API version numbers.
-#
-def version_info( version ):
-    """Canonicalize a "v#.#.#" version string into a 3-tuple.  The re.match returns None for unmatched
-    version values, eg. "v1" will return (1,None,None).  Returns the matching (<version_tuple>,
-    (<api_version>,<api_dict>)), or raises an Exception.
-
-    """
-    version_match		= re.match(
-        r"[vV]?(?P<major>\d+)(?:\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?)?",
-        version
-    )
-    assert version_match, \
-        f"Invalid API version: {version}"
-    version_tuple		= tuple(
-        map(
-            lambda x: x if x is None else int(x),
-            version_match.groups()
-        )
-    )
-
-    return version_tuple,version_api( version_tuple )
-
-
-def version_api( version_tuple ):
-    """Find the API endpoint dict implementing (nearest to) version_tuple.  If none is found, raises an
-    Exception.  If a specific value is provided for minor, patch, then it must match; otherwise, the
-    largest available entry is used.  For example, if .../v1.3/ is specified, and v1.3.7 and v1.3.0
-    are available, then the v1.3.7 API will be used.
-
-
-    """
-    apis			= sorted(sorted(version_api.endpoint))
-    try:
-        inexact_index		= version_tuple.index(None)
-        assert inexact_index > 0, \
-            f"Unsupported API version: {version_tuple}; require at least a major version number"
-    except ValueError:
-        # Exact version w/o None.
-        look_below		= bisect.bisect(apis, version_tuple)
-        assert 0 < look_below <= len(apis) \
-            and apis[look_below-1] == version_tuple, \
-            f"Unsupported API version: {version_tuple}; not found in {apis}"
-        log.debug(f"Found API exact eq {version_tuple}, below index {look_below} in {apis}")
-    else:
-        # Inexact version containing None; increment next larger version number, return available API
-        # below that.  Eg. convert (2,3,None) to (2,4,0)
-        next_above		= \
-            version_tuple[:inexact_index-1] \
-            + ( version_tuple[inexact_index-1] + 1, ) \
-            + tuple(0 for _ in version_tuple[inexact_index:])
-        # Eg. find index of (2,3,14), for (2,4,0)
-        look_below		= bisect.bisect(apis, next_above)
-        assert 0 < look_below <= len(apis) \
-            and apis[look_below-1][:inexact_index] == version_tuple[:inexact_index], \
-            f"Unsupported API version: {version_tuple}; not found in {apis}"
-        log.debug(f"Found API close to {version_tuple}, below index {look_below} in {apis} (w/ {next_above})")
-
-    # Ensure at least one API was below, and that the one found matches the exact version prefixes
-    api_version			= apis[look_below-1]
-    return api_version,version_api.endpoint[api_version]
-
-version_api.endpoint		= {} # Install all version (1,2,3) API enpoint dicts here
-
 
 # 
 # The Web API, implemented using web.py
 # 
-
-# 
-# Current .version.__version_info__ API:
-# 
-def api_ping_v1( version, path, queries, environ, accept, data=None, framework=web ):
-    """Responds to a ping with any body data supplied (to a POST .../ping)"""
-    return dict(
-        pong			= data
-    )
-
-
-def api_config_v1( version, path, queries, environ, accept, data=None, framework=web ):
-    """Responds with the current HoloPortOS config, if successful.
-
-    From holo-cofig.json, we return the contents of `v1`, (excluding seed, of course).  Assumes that
-    the current holo-config.json is stored (or sym-linked) in the ./data/ directory of the server.
-    This is presently just the `admin` object, which includes by default, `public_key` and `email`.
-
-    A PUT (replace full contents) or PATCH (change partial contents) can modify this data.  Only the
-    `admin` object in `holo-config.json` may be modified, and only `email`, `public_key` and `name`
-    may be specified.  Attempting to alter any other entries is an error, and attempting to delete
-    `email` or `public_key` is an error.
-
-    The `holo-config.json` is considered mutable configuration data, and the file is altered and
-    re-written in-place, as the last step in PUT/PATCH API call.  We cannot use an atomic move
-    operation (because the file may be supplied via symbolic link), but since the contents of
-    `holo-config.json` is used only on boot-up, we are unlikely to encounter race-conditions.
-
-
-    The `name` field is simply stored, as a string, as a property in the topmost level of the JSON
-    object in `holo-config.json`.
-
-
-    From the HoloPortOS, we produce the `holoportos` object.  This contains `network` ("live",
-    "dev", "test"), and `sshAccess` (true, false).  They may not be deleted, but their values may be
-    changed via PUT or PATCH.
-
-    If a value is changed, a Nix operation is launched to alter this state in the NixOS operating
-    system.
-
-
-    Once successful, the current system `api/v#/config` status is re-harvested and returned; the
-    results of the successful GET, PUT and PATCH are `200 OK`, and a body payload containing the
-    current config of the system.
-    """
-    with open( "data/holo-config.json" ) as f:
-        config			= json.loads( f.read() )
-    return dict(
-        admin			= config['v1']['admin']
-    )
-
-
-def api_status_v1( version, path, queries, environ, accept, data=None, framework=web ):
-    """The `holo_nixpkgs` object contains:
-
-
-    `channel.rev`:
-
-    This commit hash is parsed from the symbolic link: `./data/run/current-system ->
-    /nix/store/sakdkx4rabp5a0fk16c4r8sjbhv751hp-nixos-system-holoportos-19.09pre-git`
-
-    `current_system.rev`: Parsed from `./data/booted-system` symbolic link.
-
-    `zerotier`: From `zerotier-cli -j info`
-    """
-
-
-version_api.endpoint[__version_info__]	= dict(
-    ping			= api_ping_v1,
-    config			= api_config_v1,
-    status			= api_status_v1,
-)
-
-# 
-# Previous supported APIs:
-# 
-pass
 
 
 def api_request( prefix, version, path, queries, environ, accept, data=None, framework=web ):
@@ -201,6 +63,9 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
     assert not queries, \
         "Unrecognized queries: %s" % ", ".join( queries.keys() )
 
+    accept			= deduce_encoding([ "application/json", "text/javascript", "text/plain",
+                                                    "text/html" ],
+                                                  environ=environ, accept=accept )
     try:
         if not prefix:
             # /[index[.html]]
@@ -218,7 +83,7 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
             ]
         elif not path:
             # /<prefix>/v#[.#.#]
-            ver_tup,(ver,api)	= version_info( version )
+            ver,api		= apis.get( version )
             title		= f"API v{'.'.join(map(str,ver))} Paths Available"
             results		= [
                 dict( url = f"{environ.get('REQUEST_URI').rstrip('/')}/{p}" )
@@ -226,7 +91,7 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
             ]
         else:
             #
-            ver_tup,(ver,api)	= version_info( version )
+            ver,api		= apis.get( version )
             assert path in api, f"API v{'.'.join(map(str,ver))}; Unrecognized path: {path}"
             title		= f"API v{'.'.join(map(str,ver))} {path}"
             results		= api[path](
@@ -241,10 +106,6 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
         log.warning( "Exception: %s", exc )
         log.info( "Exception Stack: %s", traceback.format_exc() )
         raise http_exception( framework, 500, str( exc ))
-
-    accept			= deduce_encoding([ "application/json", "text/javascript", "text/plain",
-                                                    "text/html" ],
-                                                  environ=environ, accept=accept )
 
 
     if accept and accept in ( "application/json", "text/javascript", "text/plain" ):
