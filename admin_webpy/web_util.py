@@ -9,6 +9,7 @@ __email__                       = "perry.kundert@holo.host"
 __copyright__                   = "Copyright (c) 2019 Holo Ltd."
 __license__                     = "GPLv3 (or later)"
 
+import json
 import logging
 
 log				= logging.getLogger( "web_util" )
@@ -75,28 +76,4 @@ def deduce_encoding( available, environ, accept=None ):
                     quality	= q
                     accept	= avail
     return accept
-
-
-def http_exception( framework, status, message ):
-    """Return an exception appropriate for the given web framework,
-    encoding the HTTP status code and message provided.
-    """
-    if framework and framework.__name__ == "web":
-        if status == 404:
-            return framework.NotFound( message )
-
-        if status == 406:
-            class NotAcceptable( framework.NotAcceptable ):
-                def __init__(self, message):
-                    self.message = '; '.join( [self.message, message] )
-                    framework.NotAcceptable.__init__(self)
-            return NotAcceptable( message )
-
-        if status == 500:
-            exc			= framework.InternalError()
-            if message:
-                exc.message	= '; '.join( [exc.message, message] )
-            return exc
-
-    return Exception( "%d %s" % ( status, message ))
 

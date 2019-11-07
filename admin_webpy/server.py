@@ -17,7 +17,6 @@ import logging
 import os
 import socket
 import sys
-import traceback
 
 import web
 
@@ -49,7 +48,7 @@ log_cfg				= {
 # 
 
 
-def api_request( prefix, version, path, queries, environ, accept, data=None, framework=web ):
+def api_request( prefix, version, path, queries, environ, accept, data=None ):
     """A HoloPortOS admin API request.
     
     Computes a list of 'results' dicts, and renders it as requested by "accept" encoding.
@@ -66,6 +65,8 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
     accept			= deduce_encoding([ "application/json", "text/javascript", "text/plain",
                                                     "text/html" ],
                                                   environ=environ, accept=accept )
+
+    status			= None # If we have a proposed HTTP Status
     try:
         if not prefix:
             # /[index[.html]]
@@ -90,9 +91,18 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
                 for p in api
             ]
         else:
-            #
             ver,api		= apis.get( version )
-            assert path in api, f"API v{'.'.join(map(str,ver))}; Unrecognized path: {path}"
+            if path not in api: \
+                raise web.HTTPError(
+                    status	= "400 Bad Request",
+                    headers	= {
+                        'Content-Type': 'application/json',
+                    },
+                    data	= json.dumps(dict(
+                        message = f"API v{'.'.join(map(str,ver))}; Unrecognized path: {path}",
+                    ))
+                )
+
             title		= f"API v{'.'.join(map(str,ver))} {path}"
             results		= api[path](
                 version	= version,
@@ -102,38 +112,50 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
                 accept	= accept,
                 data	= data )
 
-    except Exception as exc:
-        log.warning( "Exception: %s", exc )
-        log.info( "Exception Stack: %s", traceback.format_exc() )
-        raise http_exception( framework, 500, str( exc ))
-
-
-    if accept and accept in ( "application/json", "text/javascript", "text/plain" ):
-        response		= ""
-        callback		= queries and queries.get( 'callback', "" ) or ""
-        if callback:
-            response		= callback + "( "
-        response               += json.dumps( results, sort_keys=True, indent=4 )
-        if callback:
-            response           += " )"
-    elif accept and accept in ( "text/html" ):
-        render			= web.template.render( "templates/", base="layout" )
-
-        resultslist		= results if type( results ) is list else [results] if results else []
-        resultskeys		= list( sorted( resultslist[0].keys() )) if resultslist else []
-        response		= render.keylist(
-            dict(
-                title	= title,
-                keys	= resultskeys,
-                list	= resultslist
+        if accept and accept in ( "application/json", "text/javascript", "text/plain" ):
+            response		= ""
+            callback		= queries and queries.get( 'callback', "" ) or ""
+            if callback:
+                response		= callback + "( "
+            response               += json.dumps( results, sort_keys=True, indent=4 )
+            if callback:
+                response           += " )"
+        elif accept and accept in ( "text/html" ):
+            render			= web.template.render( "templates/", base="layout" )
+    
+            resultslist		= results if type( results ) is list else [results] if results else []
+            resultskeys		= list( sorted( resultslist[0].keys() )) if resultslist else []
+            response		= render.keylist(
+                dict(
+                    title	= title,
+                    keys	= resultskeys,
+                    list	= resultslist
+                )
             )
+            assert response, f"Failed to render {results}"
+        else:
+            # Invalid encoding requested.  Return appropriate 406 Not Acceptable
+            raise web.HTTPError(
+                status	= "406 Not Acceptable",
+                headers	= {
+                    'Content-Type': 'application/json',
+                },
+                data	= json.dumps(dict(
+                    message = f"Invalid encoding: {accept}, for Accept: {environ.get('HTTP_ACCEPT', '*.*')}",
+                ))
+            )
+    except web.HTTPError as exc:
+        raise
+    except Exception as exc:
+        raise web.HTTPError(
+            status	= "500 Internal Error",
+            headers	= {
+                'Content-Type': 'application/json',
+            },
+            data	= json.dumps(dict(
+                message = str( exc )
+            ))
         )
-        assert response, f"Failed to render {results}"
-    else:
-        # Invalid encoding requested.  Return appropriate 406 Not Acceptable
-        message			=  "Invalid encoding: %s, for Accept: %s" % (
-            accept, environ.get( "HTTP_ACCEPT", "*.*" ))
-        raise http_exception( framework, 406, message )
 
     return accept,response
 
