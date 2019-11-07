@@ -26,11 +26,9 @@ Hit the `hpos-admin-server` with `curl` to see `application/json` responses, by 
 ```
 $ curl localhost:5555/api/v1/config
 {
-    "v1": {
-        "admin": {
-            "email": "a@b.ca",
-            "public_key": "baByq+hINRWCV3mn5uEtFxsNMDtrsTc+Qe64Evju/PQ"
-	}
+    "admin": {
+        "email": "a@b.ca",
+        "public_key": "baByq+hINRWCV3mn5uEtFxsNMDtrsTc+Qe64Evju/PQ"
     }
 } $
 ```
@@ -54,3 +52,5 @@ All local production data required by the `hpos-admin-server` must be in the `./
 - `holo-config.json`
   - A symbolic link (or copy) of this file is required to serve `api/v#/config`.  The `seed` is of
     course not revealed.
+- `run/{current, booted}-system`
+  - A symbolic link to NixOS's /run/ (or, to the individual ...-system paths required)
