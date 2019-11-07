@@ -32,7 +32,6 @@ prefixes			= [
 ]
 
 address				= ( 'localhost', 5555 )	# --bind [i'face][:port] HTTP bind address
-analytics			= None			# --analytics '...'      Google Analytics {'id':...}
 log				= logging.getLogger( "admin_api" )
 log_cfg				= {
     "level":	logging.WARNING,
@@ -153,7 +152,6 @@ def api_config_v1( version, path, queries, environ, accept, data=None, framework
     Once successful, the current system `api/v#/config` status is re-harvested and returned; the
     results of the successful GET, PUT and PATCH are `200 OK`, and a body payload containing the
     current config of the system.
-
     """
     with open( "data/holo-config.json" ) as f:
         config			= json.loads( f.read() )
@@ -162,9 +160,25 @@ def api_config_v1( version, path, queries, environ, accept, data=None, framework
     )
 
 
+def api_status_v1( version, path, queries, environ, accept, data=None, framework=web ):
+    """The `holo_nixpkgs` object contains:
+
+
+    `channel.rev`:
+
+    This commit hash is parsed from the symbolic link: `./data/run/current-system ->
+    /nix/store/sakdkx4rabp5a0fk16c4r8sjbhv751hp-nixos-system-holoportos-19.09pre-git`
+
+    `current_system.rev`: Parsed from `./data/booted-system` symbolic link.
+
+    `zerotier`: From `zerotier-cli -j info`
+    """
+
+
 version_api.endpoint[__version_info__]	= dict(
     ping			= api_ping_v1,
     config			= api_config_v1,
+    status			= api_status_v1,
 )
 
 # 
@@ -242,8 +256,7 @@ def api_request( prefix, version, path, queries, environ, accept, data=None, fra
         if callback:
             response           += " )"
     elif accept and accept in ( "text/html" ):
-        render			= web.template.render( "templates/", base="layout",
-                                                       globals={ 'analytics': analytics } )
+        render			= web.template.render( "templates/", base="layout" )
 
         resultslist		= results if type( results ) is list else [results] if results else []
         resultskeys		= list( sorted( resultslist[0].keys() )) if resultslist else []
@@ -347,9 +360,6 @@ def main( argv=None ):
                      default=( "%s:%d" % address ),
                      help="HTTP interface[:port] to bind (default: %s:%d)" % (
                          address[0], address[1] ))
-    ap.add_argument( '-a', '--analytics',
-                     default=None,
-                     help="Google Analytics ID (if any)" )
     ap.add_argument( '-p', '--prefix',
                      default='api',
                      help="App URL prefix (optional)" )
@@ -368,10 +378,6 @@ def main( argv=None ):
                                     int( http[1] ) if len( http ) > 1 and http[1] else address[1] )
 
     web.config.debug		= bool( args.debug )
-
-    if args.analytics:
-        global analytics
-        analytics		= { 'id': args.analytics }
 
     if args.log:
         # Output logging to a file, and handle UNIX-y log file rotation via 'logrotate', which sends
@@ -416,6 +422,7 @@ def main( argv=None ):
     except Exception as exc:
         log.warning( "Exception: %s", exc )
         return 1
+
 
 if __name__ == "__main__":
     sys.exit( main() )
